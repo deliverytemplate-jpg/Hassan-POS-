@@ -199,7 +199,7 @@ export default function POSPage() {
         return;
       }
 
-      const managerPermissions = manager.role === 'Admin' ? getPermissions('Admin') : (manager.permissions ?? getPermissions(manager.role));
+      const managerPermissions = manager.role === 'Admin' ? getPermissions('Admin') : (manager.permissions && manager.permissions.length > 0 ? manager.permissions : getPermissions(manager.role));
       if (!hasPermission(manager.role, 'apply_discounts', managerPermissions)) {
         setApprovalError(`${manager.username} is not authorized to approve discounts.`);
         return;
