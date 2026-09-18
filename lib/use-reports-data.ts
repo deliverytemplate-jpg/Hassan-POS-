@@ -357,6 +357,14 @@ export function useReportsData() {
     >();
 
     for (const sale of filteredSales) {
+      // Spread this sale's cart-level discount proportionally across its
+      // line items, so this report's totals agree with net revenue instead
+      // of summing raw, undiscounted line prices.
+      const saleSubtotal = Number(sale.subtotal || 0);
+      const discountFactor = saleSubtotal > 0
+        ? Math.max(0, (saleSubtotal - Number(sale.discount || 0)) / saleSubtotal)
+        : 1;
+
       for (const item of sale.items || []) {
         if (item.type !== "Product" || !item.productId) {
           continue;
@@ -370,7 +378,7 @@ export function useReportsData() {
         };
 
         old.qty += Number(item.quantity || 0);
-        old.sales += Number(item.total || 0);
+        old.sales += Number(item.total || 0) * discountFactor;
 
         map.set(item.productId, old);
       }
@@ -389,6 +397,14 @@ export function useReportsData() {
     >();
 
     for (const sale of filteredSales) {
+      // Spread this sale's cart-level discount proportionally across its
+      // line items, so this report's totals agree with net revenue instead
+      // of summing raw, undiscounted line prices.
+      const saleSubtotal = Number(sale.subtotal || 0);
+      const discountFactor = saleSubtotal > 0
+        ? Math.max(0, (saleSubtotal - Number(sale.discount || 0)) / saleSubtotal)
+        : 1;
+
       for (const item of sale.items || []) {
         if (item.type !== "Service" || !item.serviceId) {
           continue;
@@ -402,7 +418,7 @@ export function useReportsData() {
         };
 
         old.qty += Number(item.quantity || 0);
-        old.revenue += Number(item.total || 0);
+        old.revenue += Number(item.total || 0) * discountFactor;
 
         map.set(item.serviceId, old);
       }
