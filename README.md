@@ -1,6 +1,6 @@
 # Salon & Clinic POS (Advanced Management System)
 
-A comprehensive, offline-first management system designed for salons and clinical practices. Built with Next.js and Dexie.js for high-performance data handling without requiring a cloud backend.
+A comprehensive, offline-first management system designed for salons and clinical practices. Built with Vite, React, and Dexie.js for high-performance data handling without requiring a cloud backend.
 
 ## Features
 - **POS & Checkout**: Multi-payment support (Cash, M-Pesa, Card, Bank), Tax calculation, and Discount management.
@@ -11,7 +11,7 @@ A comprehensive, offline-first management system designed for salons and clinica
 - **Audit Logs**: Full system transparency tracking every critical action.
 
 ## Technical Stack
-- **Framework**: Next.js 14
+- **Framework**: Vite + React
 - **Styling**: Tailwind CSS
 - **Database**: Dexie.js (IndexedDB)
 - **Icons**: Lucide React
