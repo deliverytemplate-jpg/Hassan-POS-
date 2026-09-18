@@ -644,20 +644,26 @@ export default function POSPage() {
           pointsEarned = Math.round(earnableAmount * pointsPerCurrency * 100) / 100;
 
           if (pointsEarned > 0) {
-            const custRow = await db.customers.get(selectedCustomer.id);
-            const previousBalance = custRow?.loyaltyPoints || 0;
-            const newBalance = previousBalance + pointsEarned;
+            // Read-then-write the customer's balance inside one transaction,
+            // so two simultaneous sales for the same customer add their
+            // points on top of each other instead of both reading the same
+            // stale balance and one overwriting the other's points.
+            await (db as any).transaction('rw', db.customers, db.moduleRecords, async () => {
+              const custRow = await db.customers.get(selectedCustomer.id!);
+              const previousBalance = custRow?.loyaltyPoints || 0;
+              const newBalance = previousBalance + pointsEarned;
 
-            await db.customers.update(selectedCustomer.id, { loyaltyPoints: newBalance, updatedAt: new Date() });
-            await db.moduleRecords.add({
-              module: 'loyalty',
-              title: 'Points Earned',
-              status: 'Earned',
-              customerId: selectedCustomer.id,
-              amount: pointsEarned,
-              data: { reason: `Earned on sale ${inv}`, previousBalance, newBalance },
-              createdAt: new Date(),
-              updatedAt: new Date()
+              await db.customers.update(selectedCustomer.id!, { loyaltyPoints: newBalance, updatedAt: new Date() });
+              await db.moduleRecords.add({
+                module: 'loyalty',
+                title: 'Points Earned',
+                status: 'Earned',
+                customerId: selectedCustomer.id,
+                amount: pointsEarned,
+                data: { reason: `Earned on sale ${inv}`, previousBalance, newBalance },
+                createdAt: new Date(),
+                updatedAt: new Date()
+              });
             });
           }
         }
