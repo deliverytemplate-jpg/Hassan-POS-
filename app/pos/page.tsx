@@ -590,7 +590,13 @@ export default function POSPage() {
         // portion as an "IN" movement so the Cash Drawer page's balance
         // reflects real POS cash sales, not just manually-entered movements.
         const cashReceived = payments.filter(p => p.method === 'Cash').reduce((sum, p) => sum + p.amount, 0);
-        if (cashReceived > 0) {
+        // Overpayment is Cash-only (enforced above), so any negative balance
+        // here is change handed back in cash. Only the cash actually kept --
+        // received minus change given -- should land in the drawer as an
+        // "IN" movement, or the drawer balance ends up overstated.
+        const changeGiven = balance < 0 ? -balance : 0;
+        const netCashIn = cashReceived - changeGiven;
+        if (netCashIn > 0) {
           const openDrawers = await db.cashDrawers.where('status').equals('Open').toArray();
           const openDrawer = [...openDrawers].sort(
             (a: any, b: any) => new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime()
@@ -600,7 +606,7 @@ export default function POSPage() {
             await db.cashMovements.add({
               drawerId: openDrawer.id,
               type: 'IN',
-              amount: cashReceived,
+              amount: netCashIn,
               reason: `Cash sale ${inv}`,
               date: new Date(),
               username: localStorage.getItem('username') || 'System'
