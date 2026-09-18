@@ -221,43 +221,52 @@ function TransactionsPageInner() {
   // app/pos/page.tsx's handleCheckout records for the cash portion of a sale.
   // If the drawer isn't open (or was never tracking this sale), this quietly
   // does nothing — same as checkout does when there's no open drawer.
-  const reverseCashMovementForSale = async (sale: Sale, actionLabel: 'Void' | 'Refund', reason: string) => {
+  const reverseCashMovementForSale = async (
+    sale: Sale,
+    actionLabel: 'Void' | 'Refund',
+    reason: string
+  ) => {
     const cashPaid = sale.payments
       .filter(p => p.method === 'Cash')
       .reduce((sum, p) => sum + p.amount, 0);
 
     if (cashPaid <= 0) return;
 
-    // Reverse into the exact drawer this sale's cash went into at checkout
-    // (tagged on the sale itself as cashDrawerId), not "whichever drawer
-    // happens to be open right now" -- time may have passed and a
-    // different drawer may be open, which would corrupt that unrelated
-    // drawer's reconciliation. Sales made before this tagging existed fall
-    // back to the previous "currently open" behavior.
-    let targetDrawer = sale.cashDrawerId ? await db.cashDrawers.get(sale.cashDrawerId) : undefined;
+    // Cash overpayment is returned as change. Only the amount retained by
+    // the business should be reversed from the drawer.
+    const changeGiven = sale.balance < 0 ? Math.abs(sale.balance) : 0;
+    const netCashRetained = Math.max(0, cashPaid - changeGiven);
 
-    if (!targetDrawer) {
-      const openDrawers = await db.cashDrawers.where('status').equals('Open').toArray();
-      targetDrawer = [...openDrawers].sort(
-        (a: any, b: any) => new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime()
+    if (netCashRetained <= 0) return;
+
+    let drawerId = (sale as any).cashDrawerId;
+
+    // Backward compatibility for older sales that did not store a drawer ID.
+    if (!drawerId) {
+      const openDrawers = await db.cashDrawers
+        .where('status')
+        .equals('Open')
+        .toArray();
+
+      const openDrawer = [...openDrawers].sort(
+        (a: any, b: any) =>
+          new Date(b.openedAt).getTime() -
+          new Date(a.openedAt).getTime()
       )[0];
+
+      drawerId = openDrawer?.id;
     }
 
-    if (!targetDrawer) {
-      // Don't silently skip reconciliation -- a cash sale is being voided/
-      // refunded but there's no drawer (original or currently open) to post
-      // the reversal into, which would leave the drawer balance overstated
-      // with no record of why. Abort the whole void/refund so the operator
-      // sees this instead of it happening invisibly.
+    if (!drawerId) {
       throw new Error(
-        `Cannot ${actionLabel.toLowerCase()} ${sale.receiptNumber}: this sale's cash drawer (${sale.cashDrawerId ?? "unknown"}) could not be found and no drawer is currently open to post the ${currency} ${cashPaid.toLocaleString()} cash reversal into.`
+        `Cannot reverse cash for ${sale.receiptNumber}: the original cash drawer could not be determined.`
       );
     }
 
     await db.cashMovements.add({
-      drawerId: targetDrawer.id,
+      drawerId,
       type: 'OUT',
-      amount: cashPaid,
+      amount: netCashRetained,
       reason: `${actionLabel} of ${sale.receiptNumber}: ${reason}`,
       date: new Date(),
       username: localStorage.getItem('username') || 'Admin'
