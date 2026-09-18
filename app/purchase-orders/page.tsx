@@ -59,23 +59,46 @@ export default function PurchaseOrdersPage() {
 
   const receiveStock = async (id: number, po: any) => {
     if (!confirm('Strict Verification: Confirm physical receipt of these assets?')) return;
-    const product = await db.inventory.get(Number(po.data.productId));
-    if (!product) return;
 
-    const before = product.currentStock;
-    const added = Number(po.data.quantity);
-    const after = before + added;
+    let productName = '';
+    let added = 0;
 
-    await db.inventory.update(product.id!, { currentStock: after, updatedAt: new Date() });
-    
-    await db.inventoryMovements.add({
-      productId: product.id!, type: 'Stock In', quantity: added, beforeQty: before,
-      afterQty: after, userId: localStorage.getItem('username') || 'Admin',
-      reason: 'Procurement Cycle Finalized', date: new Date()
-    });
+    try {
+      await (db as any).transaction('rw', db.moduleRecords, db.inventory, db.inventoryMovements, async () => {
+        // Re-read the PO's real status inside this transaction, so a double
+        // click or a second tab receiving the same PO can't add the stock
+        // twice for what was only ever one physical delivery.
+        const currentPO = await db.moduleRecords.get(id);
+        if (!currentPO || currentPO.status === 'Received') {
+          throw new Error(`PO #${id} has already been marked as received.`);
+        }
 
-    await db.moduleRecords.update(id, { status: 'Received', updatedAt: new Date() });
-    await logAction('Procurement', `Stock Received for PO #${id}: +${added} ${product.name}`);
+        const product = await db.inventory.get(Number(po.data.productId));
+        if (!product) {
+          throw new Error('The product for this purchase order no longer exists in inventory.');
+        }
+
+        const before = product.currentStock;
+        added = Number(po.data.quantity);
+        const after = before + added;
+        productName = product.name;
+
+        await db.inventory.update(product.id!, { currentStock: after, updatedAt: new Date() });
+
+        await db.inventoryMovements.add({
+          productId: product.id!, type: 'Stock In', quantity: added, beforeQty: before,
+          afterQty: after, userId: localStorage.getItem('username') || 'Admin',
+          reason: 'Procurement Cycle Finalized', date: new Date()
+        });
+
+        await db.moduleRecords.update(id, { status: 'Received', updatedAt: new Date() });
+      });
+    } catch (e: any) {
+      alert(e?.message || 'This receipt could not be completed. Please refresh and try again.');
+      return;
+    }
+
+    await logAction('Procurement', `Stock Received for PO #${id}: +${added} ${productName}`);
   };
 
   return (
