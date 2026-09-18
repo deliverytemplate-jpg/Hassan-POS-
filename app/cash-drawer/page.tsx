@@ -83,12 +83,28 @@ export default function CashDrawerPage() {
 
     const now = new Date();
 
-    await db.cashDrawers.add({
-      status: "Open",
-      openedAt: now,
-      openingBalance: value,
-      openedBy: localStorage.getItem("username") || "unknown",
-    } as any);
+    try {
+      await (db as any).transaction('rw', db.cashDrawers, async () => {
+        // Re-check inside this transaction so two tabs opening a drawer at
+        // the same moment can't both succeed -- leaving one drawer silently
+        // orphaned while the rest of the app only ever tracks "whichever
+        // drawer opened most recently".
+        const alreadyOpen = await db.cashDrawers.where('status').equals('Open').first();
+        if (alreadyOpen) {
+          throw new Error("A cash drawer is already open. Close it before opening a new one.");
+        }
+
+        await db.cashDrawers.add({
+          status: "Open",
+          openedAt: now,
+          openingBalance: value,
+          openedBy: localStorage.getItem("username") || "unknown",
+        } as any);
+      });
+    } catch (e: any) {
+      alert(e?.message || "Could not open a new drawer. Please refresh and try again.");
+      return;
+    }
 
     await logAction(
       "Cash Drawer",
