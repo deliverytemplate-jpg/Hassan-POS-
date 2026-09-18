@@ -557,6 +557,13 @@ export default function POSPage() {
         for (const item of cart) {
           if (item.type === 'Product' && item.productId) {
             const prod = await db.inventory.get(item.productId);
+            if (!prod) {
+              // Product was deleted between adding it to the cart and
+              // checkout -- there's nothing to deduct from. Roll back the
+              // whole sale instead of silently completing it with no stock
+              // movement recorded for this item.
+              throw new Error(`"${item.name}" no longer exists in inventory -- it may have been deleted. Remove it from the cart and try again.`);
+            }
             if (prod) {
               const before = prod.currentStock;
 
