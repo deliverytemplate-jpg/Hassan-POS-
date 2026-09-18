@@ -243,7 +243,16 @@ function TransactionsPageInner() {
       )[0];
     }
 
-    if (!targetDrawer) return;
+    if (!targetDrawer) {
+      // Don't silently skip reconciliation -- a cash sale is being voided/
+      // refunded but there's no drawer (original or currently open) to post
+      // the reversal into, which would leave the drawer balance overstated
+      // with no record of why. Abort the whole void/refund so the operator
+      // sees this instead of it happening invisibly.
+      throw new Error(
+        `Cannot ${actionLabel.toLowerCase()} ${sale.receiptNumber}: this sale's cash drawer (${sale.cashDrawerId ?? "unknown"}) could not be found and no drawer is currently open to post the ${currency} ${cashPaid.toLocaleString()} cash reversal into.`
+      );
+    }
 
     await db.cashMovements.add({
       drawerId: targetDrawer.id,
@@ -308,10 +317,13 @@ function TransactionsPageInner() {
           updatedAt: new Date()
         });
 
-        skippedInventory = await restoreInventoryForSale(selectedSale, 'Void', actionReason);
-        skippedVouchers = await restoreVouchersForSale(selectedSale);
-        await reverseLoyaltyPointsForSale(selectedSale, 'Void');
-        await reverseCashMovementForSale(selectedSale, 'Void', actionReason);
+        // Use currentSale (the fresh DB record just re-read above), not the
+        // possibly-stale selectedSale snapshot, so restoration amounts match
+        // whatever items/payments actually exist on the sale right now.
+        skippedInventory = await restoreInventoryForSale(currentSale, 'Void', actionReason);
+        skippedVouchers = await restoreVouchersForSale(currentSale);
+        await reverseLoyaltyPointsForSale(currentSale, 'Void');
+        await reverseCashMovementForSale(currentSale, 'Void', actionReason);
       });
     } catch (e: any) {
       alert(e?.message || "This void could not be completed. Please refresh and try again.");
@@ -510,16 +522,19 @@ function TransactionsPageInner() {
         await db.sales.update(selectedSale.id!, {
           transactionStatus: 'Refunded',
           refundReason: actionReason,
-          refundAmount: selectedSale.totalPaid,
+          refundAmount: currentSale.totalPaid,
           refundedAt: new Date(),
           refundedBy: localStorage.getItem('username') || 'Admin',
           updatedAt: new Date()
         });
 
-        skippedInventory = await restoreInventoryForSale(selectedSale, 'Refund', actionReason);
-        skippedVouchers = await restoreVouchersForSale(selectedSale);
-        await reverseLoyaltyPointsForSale(selectedSale, 'Refund');
-        await reverseCashMovementForSale(selectedSale, 'Refund', actionReason);
+        // Use currentSale (the fresh DB record just re-read above), not the
+        // possibly-stale selectedSale snapshot, so restoration amounts match
+        // whatever items/payments actually exist on the sale right now.
+        skippedInventory = await restoreInventoryForSale(currentSale, 'Refund', actionReason);
+        skippedVouchers = await restoreVouchersForSale(currentSale);
+        await reverseLoyaltyPointsForSale(currentSale, 'Refund');
+        await reverseCashMovementForSale(currentSale, 'Refund', actionReason);
       });
     } catch (e: any) {
       alert(e?.message || "This refund could not be completed. Please refresh and try again.");

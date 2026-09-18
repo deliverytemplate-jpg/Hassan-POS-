@@ -523,8 +523,10 @@ export default function POSPage() {
       cashierName: localStorage.getItem("username") || "System", createdAt: new Date(), updatedAt: new Date()
     };
 
+    let pointsEarned = 0;
+
     try {
-      await db.transaction('rw', db.sales, db.inventory, db.inventoryMovements, db.cashDrawers, db.cashMovements, db.moduleRecords, async () => {
+      await db.transaction('rw', db.sales, db.inventory, db.inventoryMovements, db.cashDrawers, db.cashMovements, db.moduleRecords, db.customers, async () => {
         const newSaleId = await db.sales.add(saleRecord as any);
 
         // Re-validate and deduct voucher balances inside this same transaction,
@@ -625,42 +627,28 @@ export default function POSPage() {
             await db.sales.update(newSaleId, { cashDrawerId: openDrawer.id } as any);
           }
         }
-      });
 
-      const voucherSummary = voucherCheck.usage.length > 0
-        ? ` Voucher(s) redeemed: ${voucherCheck.usage.map(u => `${u.code} (${currency} ${u.amount.toLocaleString()})`).join(', ')}.`
-        : '';
+        // Award loyalty points inside this same sale transaction (not a
+        // separate one afterward), so points can never be earned without
+        // the sale committing, or vice versa, and a crash between the two
+        // can't leave one without the other.
+        if (selectedCustomer.id) {
+          const loyaltySettings = await db.moduleRecords
+            .where('module').equals('loyalty')
+            .filter(r => r.title === '__loyalty_settings__')
+            .first();
+          const pointsPerCurrency = Number(loyaltySettings?.data?.pointsPerCurrency) || 0;
 
-      const promoItems = cart.filter(i => i.discount > 0);
-      const promoSummary = promoItems.length > 0
-        ? ` Promotion(s) applied: ${promoItems.map(i => `${i.name} (-${currency} ${i.discount.toLocaleString()})`).join(', ')}.`
-        : '';
+          if (pointsPerCurrency > 0) {
+            const earnableAmount = Math.max(0, total - tip);
+            pointsEarned = Math.round(earnableAmount * pointsPerCurrency * 100) / 100;
 
-      const membershipSummary = activeMembership && membershipDiscountAmount > 0
-        ? ` Membership discount applied: ${activeMembership.data?.plan || activeMembership.title} (-${currency} ${membershipDiscountAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}).`
-        : '';
-
-      // Award loyalty points using the configured "points per currency spent"
-      // rate, on the taxed sale amount excluding tip. No-op if no rate is
-      // configured or the customer has no id (shouldn't happen post-checkout).
-      let pointsEarned = 0;
-      if (selectedCustomer.id) {
-        const loyaltySettings = await db.moduleRecords
-          .where('module').equals('loyalty')
-          .filter(r => r.title === '__loyalty_settings__')
-          .first();
-        const pointsPerCurrency = Number(loyaltySettings?.data?.pointsPerCurrency) || 0;
-
-        if (pointsPerCurrency > 0) {
-          const earnableAmount = Math.max(0, total - tip);
-          pointsEarned = Math.round(earnableAmount * pointsPerCurrency * 100) / 100;
-
-          if (pointsEarned > 0) {
-            // Read-then-write the customer's balance inside one transaction,
-            // so two simultaneous sales for the same customer add their
-            // points on top of each other instead of both reading the same
-            // stale balance and one overwriting the other's points.
-            await (db as any).transaction('rw', db.customers, db.moduleRecords, async () => {
+            if (pointsEarned > 0) {
+              // Read-then-write the customer's balance inside this same
+              // transaction, so two simultaneous sales for the same
+              // customer add their points on top of each other instead of
+              // both reading the same stale balance and one overwriting
+              // the other's points.
               const custRow = await db.customers.get(selectedCustomer.id!);
               const previousBalance = custRow?.loyaltyPoints || 0;
               const newBalance = previousBalance + pointsEarned;
@@ -676,10 +664,24 @@ export default function POSPage() {
                 createdAt: new Date(),
                 updatedAt: new Date()
               });
-            });
+            }
           }
         }
-      }
+      });
+
+      const voucherSummary = voucherCheck.usage.length > 0
+        ? ` Voucher(s) redeemed: ${voucherCheck.usage.map(u => `${u.code} (${currency} ${u.amount.toLocaleString()})`).join(', ')}.`
+        : '';
+
+      const promoItems = cart.filter(i => i.discount > 0);
+      const promoSummary = promoItems.length > 0
+        ? ` Promotion(s) applied: ${promoItems.map(i => `${i.name} (-${currency} ${i.discount.toLocaleString()})`).join(', ')}.`
+        : '';
+
+      const membershipSummary = activeMembership && membershipDiscountAmount > 0
+        ? ` Membership discount applied: ${activeMembership.data?.plan || activeMembership.title} (-${currency} ${membershipDiscountAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}).`
+        : '';
+
       const loyaltySummary = pointsEarned > 0 ? ` Loyalty points earned: ${pointsEarned}.` : '';
 
       await logAction("POS Sale", `Authorized ${inv} for ${selectedCustomer.name}. Total: ${total}. Discount applied: ${currency} ${totalDiscount.toLocaleString()}. Tax: ${currency} ${tax.toLocaleString(undefined, { maximumFractionDigits: 2 })}.${voucherSummary}${promoSummary}${membershipSummary}${loyaltySummary}`);

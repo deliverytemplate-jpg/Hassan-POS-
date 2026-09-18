@@ -42,7 +42,20 @@ export default function PurchaseOrdersPage() {
     e.preventDefault();
     const product = inventory?.find(i => String(i.id) === form.productId);
     const supplier = suppliers?.find(s => String(s.id) === form.supplierId);
-    
+
+    // The Total Volume / Unit cost fields are plain number inputs with no
+    // min attribute, so a browser will happily submit "0", a negative
+    // number, or an empty/non-numeric value -- which would later add
+    // negative or zero stock when the order is received. Reject those here.
+    const qty = Number(form.quantity);
+    const cost = Number(form.cost);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      return alert("Enter a valid quantity greater than zero.");
+    }
+    if (!Number.isFinite(cost) || cost < 0) {
+      return alert("Enter a valid, non-negative unit cost.");
+    }
+
     await db.moduleRecords.add({
       module: 'purchase-order',
       title: `${product?.name} via ${supplier?.title}`,
@@ -200,11 +213,11 @@ export default function PurchaseOrdersPage() {
              <div className="grid grid-cols-2 gap-8 pt-4">
                <div className="space-y-2">
                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-6">Total Volume</label>
-                 <input type="number" required className="w-full p-6 rounded-4xl border border-slate-100 bg-slate-50 font-black outline-none" value={form.quantity} onChange={e => setForm({...form, quantity: e.target.value})} />
+                 <input type="number" min="1" step="1" required className="w-full p-6 rounded-4xl border border-slate-100 bg-slate-50 font-black outline-none" value={form.quantity} onChange={e => setForm({...form, quantity: e.target.value})} />
                </div>
                <div className="space-y-2">
                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-6">Unit cost (KSh)</label>
-                 <input type="number" required className="w-full p-6 rounded-4xl border border-slate-100 bg-slate-50 font-black outline-none" value={form.cost} onChange={e => setForm({...form, cost: e.target.value})} />
+                 <input type="number" min="0" step="0.01" required className="w-full p-6 rounded-4xl border border-slate-100 bg-slate-50 font-black outline-none" value={form.cost} onChange={e => setForm({...form, cost: e.target.value})} />
                </div>
              </div>
              <button type="submit" className="w-full bg-primary text-white py-2.5 rounded-xl font-black text-xl shadow-high hover:scale-[1.02] transition-all uppercase tracking-widest mt-6">Authorize Order</button>
