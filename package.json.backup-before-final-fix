@@ -41,7 +41,7 @@
   "build": {
     "appId": "com.mhdigital.salonpos",
     "productName": "Salon POS",
-    "copyright": "Copyright \u00a9 2026 MH Digital",
+    "copyright": "Copyright © 2026 MH Digital",
     "files": [
       "app/electron/**/*",
       "dist/**/*",

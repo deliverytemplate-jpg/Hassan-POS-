@@ -200,7 +200,7 @@ export async function seedRealCatalog() {
     return { skipped: true, services: 0 };
   }
 
-  await (db as any).transaction("rw", db.services, async () => {
+  await db.transaction("rw", db.services, async () => {
     for (const s of REAL_CATALOG) {
       await db.services.add({
         name: s.name,
