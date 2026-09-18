@@ -513,8 +513,33 @@ export default function POSPage() {
     };
 
     try {
-      await db.transaction('rw', db.sales, db.inventory, db.inventoryMovements, db.cashDrawers, db.cashMovements, async () => {
+      await db.transaction('rw', db.sales, db.inventory, db.inventoryMovements, db.cashDrawers, db.cashMovements, db.moduleRecords, async () => {
         await db.sales.add(saleRecord as any);
+
+        // Re-validate and deduct voucher balances inside this same transaction,
+        // atomically, using the real current balance at this exact moment -- so
+        // two simultaneous checkouts using the same voucher code can never both
+        // succeed against a stale balance. Throwing here rolls back the entire
+        // transaction (sale, inventory, cash movements included).
+        for (const { record, code, amount } of voucherCheck.usage) {
+          const current = await db.moduleRecords.get(record.id!);
+          if (!current) throw new Error(`Voucher "${code}" could not be found during checkout.`);
+          if (current.status !== 'Active') throw new Error(`Voucher "${code}" is no longer active.`);
+          if (current.data?.expiry && new Date(current.data.expiry) < new Date()) {
+            throw new Error(`Voucher "${code}" expired before checkout could complete.`);
+          }
+          const currentBalance = Number(current.data?.balance ?? current.amount ?? 0);
+          if (amount > currentBalance) {
+            throw new Error(`Voucher "${code}" only has ${currency} ${currentBalance.toLocaleString()} remaining -- it may have just been used elsewhere.`);
+          }
+          const newBalance = currentBalance - amount;
+          await db.moduleRecords.update(record.id!, {
+            amount: newBalance,
+            status: newBalance <= 0 ? 'Redeemed' : 'Active',
+            data: { ...current.data, balance: newBalance },
+            updatedAt: new Date()
+          });
+        }
 
         // Update Inventory for products, and log each change in Inventory Movements
         // so the sale is traceable (same record shape Purchase Orders already uses).
@@ -563,18 +588,6 @@ export default function POSPage() {
           }
         }
       });
-
-      // Deduct the redeemed amount from each voucher's real balance, and mark
-      // it Redeemed once fully used so it can never be spent twice.
-      for (const { record, amount } of voucherCheck.usage) {
-        const newBalance = Number(record.data?.balance ?? record.amount ?? 0) - amount;
-        await db.moduleRecords.update(record.id!, {
-          amount: newBalance,
-          status: newBalance <= 0 ? 'Redeemed' : 'Active',
-          data: { ...record.data, balance: newBalance },
-          updatedAt: new Date()
-        });
-      }
 
       const voucherSummary = voucherCheck.usage.length > 0
         ? ` Voucher(s) redeemed: ${voucherCheck.usage.map(u => `${u.code} (${currency} ${u.amount.toLocaleString()})`).join(', ')}.`
@@ -629,7 +642,7 @@ export default function POSPage() {
       setCart([]); setSelectedCustomer(null); setPayments([{ method: "Cash", amount: 0, date: new Date() }]); setDiscount(0);
       setTip(0); setTipInput("");
       setCompletedSale(saleRecord);
-    } catch (e) { alert("Checkout failed. DB Error."); }
+    } catch (e) { alert(e instanceof Error ? e.message : "Checkout failed. DB Error."); }
     finally { setProcessing(false); }
   };
 
