@@ -526,7 +526,7 @@ export default function POSPage() {
     let pointsEarned = 0;
 
     try {
-      await db.transaction('rw', db.sales, db.inventory, db.inventoryMovements, db.cashDrawers, db.cashMovements, db.moduleRecords, db.customers, async () => {
+      await (db as any).transaction('rw', db.sales, db.inventory, db.inventoryMovements, db.cashDrawers, db.cashMovements, db.moduleRecords, db.customers, async () => {
         const newSaleId = await db.sales.add(saleRecord as any);
 
         // Re-validate and deduct voucher balances inside this same transaction,

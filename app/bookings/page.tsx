@@ -284,7 +284,7 @@ export default function BookingsPage() {
         localStorage.getItem("username") || "unknown",
       action: `BOOKING_${s
         .toUpperCase()
-        .replaceAll(" ", "_")}`,
+        .replace(/ /g, "_")}`,
       details: `Booking #${b.id} ${b.customerName}`,
       timestamp: new Date(),
     });
