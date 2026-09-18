@@ -492,6 +492,12 @@ export default function POSPage() {
       }
     }
 
+    for (const p of payments) {
+      if (!Number.isFinite(p.amount) || p.amount < 0) {
+        return alert(`Invalid amount on a ${p.method} payment line -- amounts must be zero or greater.`);
+      }
+    }
+
     const voucherCheck = await resolveVoucherUsage();
     if (voucherCheck.error) return alert(voucherCheck.error);
 
@@ -1010,8 +1016,8 @@ export default function POSPage() {
                       </div>
                       {payments.length > 1 && <button onClick={() => setPayments(payments.filter((_, i) => i !== idx))} className="text-slate-300 hover:text-danger p-1 ml-1.5 shrink-0"><X size={14}/></button>}
                     </div>
-                    <input type="number" placeholder="0" className="border border-slate-200 rounded-xl bg-white text-slate-900 font-semibold text-sm p-2 w-full text-right outline-none focus:ring-2 focus:ring-primary/20 transition-all" value={p.amount || ""} onChange={e => {
-                      const n = [...payments]; n[idx].amount = Number(e.target.value); setPayments(n);
+                    <input type="number" min={0} placeholder="0" className="border border-slate-200 rounded-xl bg-white text-slate-900 font-semibold text-sm p-2 w-full text-right outline-none focus:ring-2 focus:ring-primary/20 transition-all" value={p.amount || ""} onChange={e => {
+                      const n = [...payments]; n[idx].amount = Math.max(0, Number(e.target.value) || 0); setPayments(n);
                     }} />
                     {p.method === "Voucher" && (
                       <input
