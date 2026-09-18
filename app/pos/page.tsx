@@ -548,6 +548,15 @@ export default function POSPage() {
             const prod = await db.inventory.get(item.productId);
             if (prod) {
               const before = prod.currentStock;
+
+              // Re-check stock against the real current value at this exact
+              // moment (not the value cached before the transaction started),
+              // so two simultaneous checkouts for the same product can never
+              // both succeed and drive stock negative.
+              if (before < item.quantity) {
+                throw new Error(`Only ${before} of "${item.name}" in stock -- it may have just been sold elsewhere. Reduce the quantity and try again.`);
+              }
+
               const after = before - item.quantity;
 
               await db.inventory.update(item.productId, { currentStock: after, updatedAt: new Date() });
