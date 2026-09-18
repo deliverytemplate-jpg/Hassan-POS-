@@ -134,11 +134,19 @@ function TransactionsPageInner() {
   // from inside the same transaction that flips the sale to Voided/Refunded,
   // so it can never run twice for the same sale.
   const restoreInventoryForSale = async (sale: Sale, actionLabel: 'Void' | 'Refund', reason: string) => {
+    // Collect any items whose inventory record couldn't be found, so the
+    // caller can flag the discrepancy instead of this quietly restoring
+    // nothing for that item while the void/refund still reports success.
+    const skipped: string[] = [];
+
     for (const item of sale.items) {
       if (item.type !== 'Product' || !item.productId) continue;
 
       const product = await db.inventory.get(item.productId);
-      if (!product) continue;
+      if (!product) {
+        skipped.push(item.name);
+        continue;
+      }
 
       const before = product.currentStock;
       const after = before + item.quantity;
@@ -156,6 +164,8 @@ function TransactionsPageInner() {
         date: new Date()
       });
     }
+
+    return skipped;
   };
 
   // Restores any Voucher balance spent on this sale, so a void/refund gives
@@ -166,6 +176,12 @@ function TransactionsPageInner() {
   // debt against the customer — Customers/Dashboard/Reports only count a
   // sale's outstanding balance while it's still "Completed".
   const restoreVouchersForSale = async (sale: Sale) => {
+    // Collect any voucher codes whose record couldn't be found, so the
+    // caller can flag the discrepancy instead of this quietly restoring
+    // no credit for that voucher while the void/refund still reports
+    // success.
+    const skipped: string[] = [];
+
     // Restore Voucher balance(s) spent on this sale. Multiple payment lines
     // using the same code are combined first, same as resolveVoucherUsage
     // does when the voucher is redeemed.
@@ -184,7 +200,7 @@ function TransactionsPageInner() {
           .filter(v => (v.title || '').trim().toUpperCase() === code)
           .first();
 
-        if (!voucher) continue; // Voucher record no longer exists; nothing to restore it to.
+        if (!voucher) { skipped.push(code); continue; } // Voucher record no longer exists; nothing to restore it to.
 
         const newBalance = Number(voucher.data?.balance ?? voucher.amount ?? 0) + amount;
         await db.moduleRecords.update(voucher.id!, {
@@ -195,6 +211,8 @@ function TransactionsPageInner() {
         });
       }
     }
+
+    return skipped;
   };
 
   // Reverses the cash portion of a sale in the currently open cash drawer, so
@@ -268,6 +286,9 @@ function TransactionsPageInner() {
     if (!selectedSale || !actionReason) return;
     if (!confirm("STRICT VERIFICATION: Invalidate this invoice permanently?")) return;
 
+    let skippedInventory: string[] = [];
+    let skippedVouchers: string[] = [];
+
     try {
       await (db as any).transaction('rw', db.sales, db.inventory, db.inventoryMovements, db.customers, db.moduleRecords, db.cashDrawers, db.cashMovements, async () => {
         // Re-read the sale's real status inside this transaction (not the
@@ -287,8 +308,8 @@ function TransactionsPageInner() {
           updatedAt: new Date()
         });
 
-        await restoreInventoryForSale(selectedSale, 'Void', actionReason);
-        await restoreVouchersForSale(selectedSale);
+        skippedInventory = await restoreInventoryForSale(selectedSale, 'Void', actionReason);
+        skippedVouchers = await restoreVouchersForSale(selectedSale);
         await reverseLoyaltyPointsForSale(selectedSale, 'Void');
         await reverseCashMovementForSale(selectedSale, 'Void', actionReason);
       });
@@ -297,7 +318,15 @@ function TransactionsPageInner() {
       return;
     }
 
-    await logAction('Void', `Voided ${selectedSale.receiptNumber}. Reason: ${actionReason}. Inventory restored for any product items. Voucher balance restored if used. Loyalty points earned on this sale reversed if any.`);
+    // Surface any restoration gap instead of letting a clean-looking void
+    // hide the fact that some stock/voucher credit was never actually
+    // restored.
+    const restoreWarning = (skippedInventory.length > 0 || skippedVouchers.length > 0)
+      ? ` WARNING: could not restore inventory for [${skippedInventory.join(', ')}] and/or vouchers [${skippedVouchers.join(', ')}] -- record(s) no longer exist.`
+      : '';
+    if (restoreWarning) alert(`Void completed, but with a discrepancy:${restoreWarning}`);
+
+    await logAction('Void', `Voided ${selectedSale.receiptNumber}. Reason: ${actionReason}. Inventory restored for any product items. Voucher balance restored if used. Loyalty points earned on this sale reversed if any.${restoreWarning}`);
     setSelectedSale(null); setActionReason("");
   };
 
@@ -464,6 +493,9 @@ function TransactionsPageInner() {
     if (!selectedSale || !actionReason) return;
     if (!confirm("FINANCIAL REVERSAL: Process full refund?")) return;
 
+    let skippedInventory: string[] = [];
+    let skippedVouchers: string[] = [];
+
     try {
       await (db as any).transaction('rw', db.sales, db.inventory, db.inventoryMovements, db.customers, db.moduleRecords, db.cashDrawers, db.cashMovements, async () => {
         // Re-read the sale's real status inside this transaction (not the
@@ -484,8 +516,8 @@ function TransactionsPageInner() {
           updatedAt: new Date()
         });
 
-        await restoreInventoryForSale(selectedSale, 'Refund', actionReason);
-        await restoreVouchersForSale(selectedSale);
+        skippedInventory = await restoreInventoryForSale(selectedSale, 'Refund', actionReason);
+        skippedVouchers = await restoreVouchersForSale(selectedSale);
         await reverseLoyaltyPointsForSale(selectedSale, 'Refund');
         await reverseCashMovementForSale(selectedSale, 'Refund', actionReason);
       });
@@ -494,7 +526,15 @@ function TransactionsPageInner() {
       return;
     }
 
-    await logAction('Refund', `Refunded ${selectedSale.receiptNumber}. Reason: ${actionReason}. Inventory restored for any product items. Voucher balance restored if used. Loyalty points earned on this sale reversed if any.`);
+    // Surface any restoration gap instead of letting a clean-looking refund
+    // hide the fact that some stock/voucher credit was never actually
+    // restored.
+    const restoreWarning = (skippedInventory.length > 0 || skippedVouchers.length > 0)
+      ? ` WARNING: could not restore inventory for [${skippedInventory.join(', ')}] and/or vouchers [${skippedVouchers.join(', ')}] -- record(s) no longer exist.`
+      : '';
+    if (restoreWarning) alert(`Refund completed, but with a discrepancy:${restoreWarning}`);
+
+    await logAction('Refund', `Refunded ${selectedSale.receiptNumber}. Reason: ${actionReason}. Inventory restored for any product items. Voucher balance restored if used. Loyalty points earned on this sale reversed if any.${restoreWarning}`);
     setSelectedSale(null); setActionReason("");
   };
 
