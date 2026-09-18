@@ -525,7 +525,7 @@ export default function POSPage() {
 
     try {
       await db.transaction('rw', db.sales, db.inventory, db.inventoryMovements, db.cashDrawers, db.cashMovements, db.moduleRecords, async () => {
-        await db.sales.add(saleRecord as any);
+        const newSaleId = await db.sales.add(saleRecord as any);
 
         // Re-validate and deduct voucher balances inside this same transaction,
         // atomically, using the real current balance at this exact moment -- so
@@ -618,6 +618,11 @@ export default function POSPage() {
               date: new Date(),
               username: localStorage.getItem('username') || 'System'
             } as any);
+
+            // Tag the sale with the exact drawer its cash went into, so a
+            // later void/refund reverses against this same drawer instead
+            // of "whichever drawer happens to be open at that later time".
+            await db.sales.update(newSaleId, { cashDrawerId: openDrawer.id } as any);
           }
         }
       });

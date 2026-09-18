@@ -210,15 +210,25 @@ function TransactionsPageInner() {
 
     if (cashPaid <= 0) return;
 
-    const openDrawers = await db.cashDrawers.where('status').equals('Open').toArray();
-    const openDrawer = [...openDrawers].sort(
-      (a: any, b: any) => new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime()
-    )[0];
+    // Reverse into the exact drawer this sale's cash went into at checkout
+    // (tagged on the sale itself as cashDrawerId), not "whichever drawer
+    // happens to be open right now" -- time may have passed and a
+    // different drawer may be open, which would corrupt that unrelated
+    // drawer's reconciliation. Sales made before this tagging existed fall
+    // back to the previous "currently open" behavior.
+    let targetDrawer = sale.cashDrawerId ? await db.cashDrawers.get(sale.cashDrawerId) : undefined;
 
-    if (!openDrawer) return;
+    if (!targetDrawer) {
+      const openDrawers = await db.cashDrawers.where('status').equals('Open').toArray();
+      targetDrawer = [...openDrawers].sort(
+        (a: any, b: any) => new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime()
+      )[0];
+    }
+
+    if (!targetDrawer) return;
 
     await db.cashMovements.add({
-      drawerId: openDrawer.id,
+      drawerId: targetDrawer.id,
       type: 'OUT',
       amount: cashPaid,
       reason: `${actionLabel} of ${sale.receiptNumber}: ${reason}`,
