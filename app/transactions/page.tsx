@@ -720,7 +720,7 @@ function TransactionsPageInner() {
                  {selectedSale.payments.map((p, idx) => (
                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between' }}><span>{p.method}</span><span>{currency} {p.amount.toLocaleString()}</span></div>
                  ))}
-                 <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}><span>Balance</span><span>{currency} {selectedSale.balance.toLocaleString()}</span></div>
+                 <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}><span>{selectedSale.balance < 0 ? 'Change' : 'Balance'}</span><span>{currency} {Math.abs(selectedSale.balance).toLocaleString()}</span></div>
                </div>
 
                {salonSettings?.receiptFooter && (
