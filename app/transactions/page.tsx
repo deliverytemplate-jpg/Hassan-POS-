@@ -329,17 +329,37 @@ function TransactionsPageInner() {
         date: new Date()
       };
 
-      const updatedPayments = [...selectedSale.payments, newPayment];
-      const newTotalPaid = selectedSale.totalPaid + amount;
-      const newBalance = Math.max(0, selectedSale.total - newTotalPaid);
-      const newStatus = newBalance <= 0 ? "Paid" : "Partially Paid";
+      // Recompute totals from a fresh read of the sale inside this same
+      // transaction (not the possibly-stale selectedSale snapshot), so a
+      // payment entered around the same time as another one -- from this
+      // tab or another -- is added on top of the real current numbers
+      // instead of overwriting them via a last-write-wins update.
+      let updatedPayments: SalePayment[] = [];
+      let newTotalPaid = 0;
+      let newBalance = 0;
+      let newStatus = "";
 
-      await db.sales.update(selectedSale.id!, {
-        payments: updatedPayments,
-        totalPaid: newTotalPaid,
-        balance: newBalance,
-        status: newStatus,
-        updatedAt: new Date()
+      await (db as any).transaction('rw', db.sales, async () => {
+        const currentSale = await db.sales.get(selectedSale.id!);
+        if (!currentSale) {
+          throw new Error("This sale could not be found -- it may have been removed.");
+        }
+        if (amount > currentSale.balance) {
+          throw new Error(`Amount exceeds the outstanding balance of ${currency} ${currentSale.balance.toLocaleString()}.`);
+        }
+
+        updatedPayments = [...currentSale.payments, newPayment];
+        newTotalPaid = currentSale.totalPaid + amount;
+        newBalance = Math.max(0, currentSale.total - newTotalPaid);
+        newStatus = newBalance <= 0 ? "Paid" : "Partially Paid";
+
+        await db.sales.update(selectedSale.id!, {
+          payments: updatedPayments,
+          totalPaid: newTotalPaid,
+          balance: newBalance,
+          status: newStatus,
+          updatedAt: new Date()
+        });
       });
 
       if (paymentMethod === 'Cash' && amount > 0) {
