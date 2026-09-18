@@ -258,20 +258,34 @@ function TransactionsPageInner() {
     if (!selectedSale || !actionReason) return;
     if (!confirm("STRICT VERIFICATION: Invalidate this invoice permanently?")) return;
 
-    await (db as any).transaction('rw', db.sales, db.inventory, db.inventoryMovements, db.customers, db.moduleRecords, db.cashDrawers, db.cashMovements, async () => {
-      await db.sales.update(selectedSale.id!, {
-        transactionStatus: 'Voided',
-        voidReason: actionReason,
-        voidedAt: new Date(),
-        voidedBy: localStorage.getItem('username') || 'Admin',
-        updatedAt: new Date()
-      });
+    try {
+      await (db as any).transaction('rw', db.sales, db.inventory, db.inventoryMovements, db.customers, db.moduleRecords, db.cashDrawers, db.cashMovements, async () => {
+        // Re-read the sale's real status inside this transaction (not the
+        // possibly-stale UI snapshot), so if another tab already voided or
+        // refunded this same sale a moment ago, this one backs out instead
+        // of restoring stock/vouchers/cash a second time.
+        const currentSale = await db.sales.get(selectedSale.id!);
+        if (!currentSale || currentSale.transactionStatus === 'Voided' || currentSale.transactionStatus === 'Refunded') {
+          throw new Error(`${selectedSale.receiptNumber} has already been voided or refunded -- it may have just been processed in another tab.`);
+        }
 
-      await restoreInventoryForSale(selectedSale, 'Void', actionReason);
-      await restoreVouchersForSale(selectedSale);
-      await reverseLoyaltyPointsForSale(selectedSale, 'Void');
-      await reverseCashMovementForSale(selectedSale, 'Void', actionReason);
-    });
+        await db.sales.update(selectedSale.id!, {
+          transactionStatus: 'Voided',
+          voidReason: actionReason,
+          voidedAt: new Date(),
+          voidedBy: localStorage.getItem('username') || 'Admin',
+          updatedAt: new Date()
+        });
+
+        await restoreInventoryForSale(selectedSale, 'Void', actionReason);
+        await restoreVouchersForSale(selectedSale);
+        await reverseLoyaltyPointsForSale(selectedSale, 'Void');
+        await reverseCashMovementForSale(selectedSale, 'Void', actionReason);
+      });
+    } catch (e: any) {
+      alert(e?.message || "This void could not be completed. Please refresh and try again.");
+      return;
+    }
 
     await logAction('Void', `Voided ${selectedSale.receiptNumber}. Reason: ${actionReason}. Inventory restored for any product items. Voucher balance restored if used. Loyalty points earned on this sale reversed if any.`);
     setSelectedSale(null); setActionReason("");
@@ -420,21 +434,35 @@ function TransactionsPageInner() {
     if (!selectedSale || !actionReason) return;
     if (!confirm("FINANCIAL REVERSAL: Process full refund?")) return;
 
-    await (db as any).transaction('rw', db.sales, db.inventory, db.inventoryMovements, db.customers, db.moduleRecords, db.cashDrawers, db.cashMovements, async () => {
-      await db.sales.update(selectedSale.id!, {
-        transactionStatus: 'Refunded',
-        refundReason: actionReason,
-        refundAmount: selectedSale.totalPaid,
-        refundedAt: new Date(),
-        refundedBy: localStorage.getItem('username') || 'Admin',
-        updatedAt: new Date()
-      });
+    try {
+      await (db as any).transaction('rw', db.sales, db.inventory, db.inventoryMovements, db.customers, db.moduleRecords, db.cashDrawers, db.cashMovements, async () => {
+        // Re-read the sale's real status inside this transaction (not the
+        // possibly-stale UI snapshot), so if another tab already voided or
+        // refunded this same sale a moment ago, this one backs out instead
+        // of restoring stock/vouchers/cash a second time.
+        const currentSale = await db.sales.get(selectedSale.id!);
+        if (!currentSale || currentSale.transactionStatus === 'Voided' || currentSale.transactionStatus === 'Refunded') {
+          throw new Error(`${selectedSale.receiptNumber} has already been voided or refunded -- it may have just been processed in another tab.`);
+        }
 
-      await restoreInventoryForSale(selectedSale, 'Refund', actionReason);
-      await restoreVouchersForSale(selectedSale);
-      await reverseLoyaltyPointsForSale(selectedSale, 'Refund');
-      await reverseCashMovementForSale(selectedSale, 'Refund', actionReason);
-    });
+        await db.sales.update(selectedSale.id!, {
+          transactionStatus: 'Refunded',
+          refundReason: actionReason,
+          refundAmount: selectedSale.totalPaid,
+          refundedAt: new Date(),
+          refundedBy: localStorage.getItem('username') || 'Admin',
+          updatedAt: new Date()
+        });
+
+        await restoreInventoryForSale(selectedSale, 'Refund', actionReason);
+        await restoreVouchersForSale(selectedSale);
+        await reverseLoyaltyPointsForSale(selectedSale, 'Refund');
+        await reverseCashMovementForSale(selectedSale, 'Refund', actionReason);
+      });
+    } catch (e: any) {
+      alert(e?.message || "This refund could not be completed. Please refresh and try again.");
+      return;
+    }
 
     await logAction('Refund', `Refunded ${selectedSale.receiptNumber}. Reason: ${actionReason}. Inventory restored for any product items. Voucher balance restored if used. Loyalty points earned on this sale reversed if any.`);
     setSelectedSale(null); setActionReason("");
