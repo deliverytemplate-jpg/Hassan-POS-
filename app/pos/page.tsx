@@ -498,6 +498,11 @@ export default function POSPage() {
       }
     }
 
+    const nonCashPaid = payments.filter(p => p.method !== "Cash").reduce((sum, p) => sum + p.amount, 0);
+    if (nonCashPaid > total + 0.01) {
+      return alert("Card, M-Pesa, Bank, Voucher, and Customer Credit payments cannot exceed the total -- only Cash can be overpaid, for change. Reduce the non-cash amount(s).");
+    }
+
     const voucherCheck = await resolveVoucherUsage();
     if (voucherCheck.error) return alert(voucherCheck.error);
 
@@ -1205,9 +1210,9 @@ export default function POSPage() {
               <div className="flex justify-between text-slate-500"><span>Items</span><span className="text-slate-900 font-semibold">{completedSale.items.length}</span></div>
               <div className="flex justify-between items-center text-slate-500 pt-2 mt-1.5 border-t border-slate-200"><span>Total</span><span className="text-slate-900 font-black text-lg">{currency} {completedSale.total.toLocaleString()}</span></div>
               <div className="flex justify-between items-center text-slate-500">
-                <span>{completedSale.balance > 0 ? 'Balance due' : 'Status'}</span>
-                <span className={`text-xs font-bold rounded-full px-2.5 py-1 ${completedSale.balance > 0 ? 'text-danger bg-danger/10' : 'text-success bg-success/10'}`}>
-                  {completedSale.balance > 0 ? `${currency} ${completedSale.balance.toLocaleString()}` : 'Paid in full'}
+                <span>{completedSale.balance > 0 ? 'Balance due' : completedSale.balance < 0 ? 'Change due' : 'Status'}</span>
+                <span className={`text-xs font-bold rounded-full px-2.5 py-1 ${completedSale.balance > 0 ? 'text-danger bg-danger/10' : completedSale.balance < 0 ? 'text-primary bg-primary/10' : 'text-success bg-success/10'}`}>
+                  {completedSale.balance > 0 ? `${currency} ${completedSale.balance.toLocaleString()}` : completedSale.balance < 0 ? `${currency} ${Math.abs(completedSale.balance).toLocaleString()}` : 'Paid in full'}
                 </span>
               </div>
             </div>
@@ -1267,7 +1272,7 @@ export default function POSPage() {
                     <span>{currency} {p.amount.toLocaleString()}</span>
                   </div>
                 ))}
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}><span>Balance</span><span>{currency} {completedSale.balance.toLocaleString()}</span></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}><span>{completedSale.balance < 0 ? 'Change' : 'Balance'}</span><span>{currency} {Math.abs(completedSale.balance).toLocaleString()}</span></div>
               </div>
 
               {settings?.[0]?.receiptFooter && (
