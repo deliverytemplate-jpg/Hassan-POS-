@@ -141,7 +141,21 @@ export function useReportsData() {
    * the dashboard can accurately report refunds and voids.
    */
   const allInRange = useMemo(
-    () => (sales || []).filter((sale) => dateInRange(sale.createdAt)),
+    () =>
+      (sales || []).filter((sale) => {
+        // A void/refund's cash impact happens on the day it was actually
+        // voided/refunded, not the day the original sale was made -- use
+        // that date for range filtering so daily reports reconcile with
+        // the money that actually moved that day.
+        const effectiveDate =
+          sale.transactionStatus === "Refunded"
+            ? sale.refundedAt || sale.createdAt
+            : sale.transactionStatus === "Voided"
+            ? sale.voidedAt || sale.createdAt
+            : sale.createdAt;
+
+        return dateInRange(effectiveDate);
+      }),
     [sales, start, end]
   );
 
