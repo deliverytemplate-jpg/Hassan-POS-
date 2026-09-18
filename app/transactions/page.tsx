@@ -371,93 +371,131 @@ function TransactionsPageInner() {
     setPaymentError("");
 
     const amount = Math.round((Number(paymentAmount) || 0) * 100) / 100;
-    if (amount <= 0) {
+
+    if (!Number.isFinite(amount) || amount <= 0) {
       setPaymentError("Enter a valid amount.");
-      return;
-    }
-    if (amount > selectedSale.balance) {
-      setPaymentError(`Amount exceeds the outstanding balance of ${currency} ${selectedSale.balance.toLocaleString()}.`);
       return;
     }
 
     setPaymentProcessing(true);
+
     try {
-      const newPayment: SalePayment = {
-        method: paymentMethod,
-        amount,
-        reference: paymentReference.trim() || undefined,
-        date: new Date()
-      };
+      const result = await (db as any).transaction(
+        "rw",
+        db.sales,
+        db.cashDrawers,
+        db.cashMovements,
+        async () => {
+          // Always use the current database record, not the possibly stale
+          // invoice snapshot from this window.
+          const currentSale = await db.sales.get(selectedSale.id!);
 
-      // Recompute totals from a fresh read of the sale inside this same
-      // transaction (not the possibly-stale selectedSale snapshot), so a
-      // payment entered around the same time as another one -- from this
-      // tab or another -- is added on top of the real current numbers
-      // instead of overwriting them via a last-write-wins update.
-      let updatedPayments: SalePayment[] = [];
-      let newTotalPaid = 0;
-      let newBalance = 0;
-      let newStatus = "";
+          if (!currentSale) {
+            throw new Error("This sale could not be found. Please refresh and try again.");
+          }
 
-      await (db as any).transaction('rw', db.sales, async () => {
-        const currentSale = await db.sales.get(selectedSale.id!);
-        if (!currentSale) {
-          throw new Error("This sale could not be found -- it may have been removed.");
-        }
-        if (amount > currentSale.balance) {
-          throw new Error(`Amount exceeds the outstanding balance of ${currency} ${currentSale.balance.toLocaleString()}.`);
-        }
+          if (currentSale.transactionStatus !== "Completed") {
+            throw new Error(
+              `Payment cannot be recorded because ${currentSale.receiptNumber} is ${currentSale.transactionStatus}.`
+            );
+          }
 
-        updatedPayments = [...currentSale.payments, newPayment];
-        newTotalPaid = currentSale.totalPaid + amount;
-        newBalance = Math.max(0, currentSale.total - newTotalPaid);
-        newStatus = newBalance <= 0 ? "Paid" : "Partially Paid";
+          if (amount > currentSale.balance) {
+            throw new Error(
+              `Amount exceeds the outstanding balance of ${currency} ${currentSale.balance.toLocaleString()}.`
+            );
+          }
 
-        await db.sales.update(selectedSale.id!, {
-          payments: updatedPayments,
-          totalPaid: newTotalPaid,
-          balance: newBalance,
-          status: newStatus,
-          updatedAt: new Date()
-        });
-      });
+          const now = new Date();
+          let drawerId: number | undefined;
 
-      if (paymentMethod === 'Cash' && amount > 0) {
-        const openDrawers = await db.cashDrawers.where('status').equals('Open').toArray();
-        const openDrawer = [...openDrawers].sort(
-          (a: any, b: any) => new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime()
-        )[0];
+          if (paymentMethod === "Cash") {
+            const openDrawers = await db.cashDrawers
+              .where("status")
+              .equals("Open")
+              .toArray();
 
-        if (openDrawer) {
-          await db.cashMovements.add({
-            drawerId: openDrawer.id,
-            type: 'IN',
+            const openDrawer = [...openDrawers].sort(
+              (a: any, b: any) =>
+                new Date(b.openedAt).getTime() -
+                new Date(a.openedAt).getTime()
+            )[0];
+
+            if (!openDrawer?.id) {
+              throw new Error(
+                "Cannot record a cash payment because no cash drawer is open."
+              );
+            }
+
+            drawerId = openDrawer.id;
+          }
+
+          const newPayment: SalePayment = {
+            method: paymentMethod,
             amount,
-            reason: `Payment recorded on ${selectedSale.receiptNumber}`,
-            date: new Date(),
-            username: localStorage.getItem('username') || 'System'
-          } as any);
+            reference: paymentReference.trim() || undefined,
+            date: now,
+            ...(drawerId ? { cashDrawerId: drawerId } : {}),
+          } as SalePayment;
+
+          const updatedPayments = [
+            ...(currentSale.payments || []),
+            newPayment,
+          ];
+
+          const newTotalPaid = Number(currentSale.totalPaid || 0) + amount;
+          const newBalance = Math.max(
+            0,
+            Number(currentSale.total || 0) - newTotalPaid
+          );
+          const newStatus =
+            newBalance <= 0 ? "Paid" : "Partially Paid";
+
+          const updatedSale = {
+            ...currentSale,
+            payments: updatedPayments,
+            totalPaid: newTotalPaid,
+            balance: newBalance,
+            status: newStatus,
+            updatedAt: now,
+          };
+
+          await db.sales.update(currentSale.id!, {
+            payments: updatedPayments,
+            totalPaid: newTotalPaid,
+            balance: newBalance,
+            status: newStatus,
+            updatedAt: now,
+          });
+
+          if (paymentMethod === "Cash" && drawerId) {
+            await db.cashMovements.add({
+              drawerId,
+              type: "IN",
+              amount,
+              reason: `Payment recorded on ${currentSale.receiptNumber}`,
+              date: now,
+              username: localStorage.getItem("username") || "System",
+            } as any);
+          }
+
+          return updatedSale;
         }
-      }
+      );
 
       await logAction(
         "Payment Recorded",
-        `Recorded ${currency} ${amount.toLocaleString()} payment via ${paymentMethod} on ${selectedSale.receiptNumber}. New status: ${newStatus}. Remaining balance: ${currency} ${newBalance.toLocaleString()}.`
+        `Recorded ${currency} ${amount.toLocaleString()} payment via ${paymentMethod} on ${result.receiptNumber}. New status: ${result.status}. Remaining balance: ${currency} ${result.balance.toLocaleString()}.`
       );
 
-      // Keep the open detail overlay in sync immediately, since it reads from
-      // this local snapshot rather than the live query.
-      setSelectedSale({
-        ...selectedSale,
-        payments: updatedPayments,
-        totalPaid: newTotalPaid,
-        balance: newBalance,
-        status: newStatus,
-        updatedAt: new Date()
-      });
+      setSelectedSale(result);
       setShowPaymentModal(false);
     } catch (e) {
-      setPaymentError("A system database error occurred. Please try again.");
+      setPaymentError(
+        e instanceof Error
+          ? e.message
+          : "A system database error occurred. Please try again."
+      );
     } finally {
       setPaymentProcessing(false);
     }
